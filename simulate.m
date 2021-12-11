@@ -6,10 +6,10 @@ clc; clear all; close all;
 dir_num = 10;
 background_dir = 45;
 iter = 15;
-img_path = 'dog.png';
+img_path = 'da.png';
 intensityLevel = 7;
-line_width = 7;
-line_extend = 2*line_width;
+line_width = 4;
+line_extend = 4*line_width;
 clipLimit = 0.01;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -57,81 +57,80 @@ imshow(quantizedImage);
 %      use get_mask to get mask or load it directly      %
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%mask_all = get_mask(img_path, dir_num, iter, background_dir);
-mask_all = load('mask_all.mat').mask_all;
+mask_all = get_mask(img_path, dir_num, iter, background_dir);
+%mask_all = load('mask_all.mat').mask_all;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 LDR_mask = get_LDR_mask(quantizedImage, intensityLevel);
 
 
-% mask = mask_all(:,:,1);
-% LDR_mask = my_imrotate(LDR_mask, 10, 0);
-% mask = my_imrotate(mask, 10, 0);
-% canvas = my_imrotate(canvas, -90+1*180/dir_num, 'replicate');
-% figure
-% imshow(canvas);
-% canvas = my_imrotate_back(canvas, -(-90+1*180/dir_num), original_h, original_w);
-% figure
-% imshow(canvas);
-
 
 result = ones(original_h,original_w)*255;
 result = uint8(result);
 
+strokes = stroke.empty(0,0);
 
 for dirs = 0 : dir_num-1
 %for dirs = 5 : 5
     angle = -90+dirs*180/dir_num;
     mask = mask_all(:,:,dirs+1);
-    
+
     %%%%    rotate    %%%%%%%%
-    canvas = get_Gaussian([original_h,original_w], 3, 250);
-    canvas = uint8(canvas);
-    canvas = my_imrotate(canvas, -angle, 'replicate', 'nearest');
     mask = my_imrotate(mask, -angle, 0, 'nearest');
-    LDR_mask = my_imrotate(LDR_mask, -angle, 0, 'nearest');
+    LDR_mask_rotated = my_imrotate(LDR_mask, -angle, 0, 'nearest');
+    img_gray_rotated = my_imrotate(img_gray, -angle, 0, 'nearest');
     %%%%%%%%%%%%%%%%%%%%%%%%%%%
     
+    [gradient_magnitude,~] = imgradient(img_gray_rotated);
     interval = 255/(intensityLevel);
-    
     for now_intersity = 0 : intensityLevel-1
-    %for now_intersity = 6 : 6
-        now_LDR_mask = LDR_mask(:,:,now_intersity+1);
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% debug %%%%%%%%%%%%
-%         if (dirs == 5 && now_intersity == 6)
-%             figure 
-%             imshow(mask)
-%             figure 
-%             imshow(now_LDR_mask)
-%             figure 
-%             imshow(mask & now_LDR_mask)
-%             [test_start_x, test_start_y, test_L, test_n] = get_line_pos_and_len(mask & now_LDR_mask, line_extend, line_width);
-%         end
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        [start_x, start_y, L, n] = get_line_pos_and_len(mask & now_LDR_mask, line_extend, line_width);
-        
-        distribution = get_distribution(line_width, interval*(now_intersity));
-        
+        now_LDR_mask = LDR_mask_rotated(:,:,now_intersity+1);
+        Grayscale = interval*(now_intersity) + interval/2;
+        [start_x, start_y, L, n] = get_line_pos_and_len(mask & now_LDR_mask, line_extend, line_width);  
+        distribution = get_distribution(line_width, Grayscale);   
         for i = 1:n
-            line = get_line(distribution, L(i));
-            ori = canvas(start_y(i) : start_y(i)+2*line_width-1 , start_x(i) : start_x(i)+ L(i) - 1);
-            canvas(start_y(i) : start_y(i)+2*line_width-1 , start_x(i) : start_x(i)+ L(i) - 1) = min(line,ori);
+            tmp_importance = (255 - Grayscale) * sum(gradient_magnitude(start_y(i) : start_y(i)+2*line_width-1 , start_x(i) : start_x(i)+ L(i) - 0),'all');
+            tmp_stroke = stroke(Grayscale,angle,L(i),start_x(i),start_y(i),tmp_importance);
+            strokes(end+1) = tmp_stroke;
         end
     end
-    %figure
-    %imshow(canvas);
-    
-    %%%%    rotate back  %%%%%%
-    canvas = my_imrotate_back(canvas, angle, original_h, original_w, 'nearest');
-    LDR_mask = my_imrotate_back(LDR_mask, angle, original_h, original_w, 'nearest');
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%
-    
-    result = min(result, canvas);
-    imshow(result);
-    pause(0.010)
 end
 
+[~, ind] = sort([strokes.importance]);
+ind = flip(ind);
+strokes_sorted = strokes(ind);
+
+figure
+for i = 1:size(strokes,2)
+    %%%%%%%%%%% imformation of a stroke %%%%%%%%%%%%%%%%%%%
+    stroke_length = strokes_sorted(i).length;
+    stroke_center_intensity = strokes_sorted(i).center_intensity;
+    stroke_angle = strokes_sorted(i).angle;
+    stroke_start_x = strokes_sorted(i).start_x;
+    stroke_start_y = strokes_sorted(i).start_y;
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    
+    %%%%%%%%%% a tmp canvas %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    canvas = get_Gaussian([original_h,original_w], 3, 250);
+    canvas = uint8(canvas);
+    canvas = my_imrotate(canvas, -stroke_angle, 'replicate', 'nearest');
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    
+    %%%%%%%%%%% generate a line %%%%%%%%%%%%%%%%%%%%%%%%%%
+    distribution = get_distribution(line_width, stroke_center_intensity);
+    line = get_line(distribution, stroke_length);
+    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    
+    canvas(stroke_start_y : stroke_start_y+2*line_width-1 , stroke_start_x : stroke_start_x+ stroke_length - 1) = line;
+    canvas = my_imrotate_back(canvas, stroke_angle, original_h, original_w, 'nearest');
+    result = min(result, canvas);
+    
+    if(mod(i,50) == 1)
+        imshow(result);
+    end
+    
+end
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -332,15 +331,15 @@ function [start_x, start_y, L, n] = get_line_pos_and_len(mask, extend, line_widt
        
         
         %%%%%% two horizontal line too close %%%%%
-        if tmp_n>=2
-            dist = tmp_start_x(2:end) - (tmp_start_x(1:end-1)+tmp_L(1:end-1)-1);
-            keep = dist > 1;
-            keep = [true, keep];
-            tmp_start_x = tmp_start_x(keep);
-            %tmp_start_y = tmp_start_y(keep);
-            tmp_L = tmp_L(keep);
-            tmp_n = sum(keep);
-        end
+%         if tmp_n>=2
+%             dist = tmp_start_x(2:end) - (tmp_start_x(1:end-1)+tmp_L(1:end-1)-1);
+%             keep = dist > 1;
+%             keep = [true, keep];
+%             tmp_start_x = tmp_start_x(keep);
+%             %tmp_start_y = tmp_start_y(keep);  
+%             tmp_L = tmp_L(keep);
+%             tmp_n = sum(keep);
+%         end
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         
         %%%%%%%% extend the line %%%%%%
@@ -357,9 +356,9 @@ function [start_x, start_y, L, n] = get_line_pos_and_len(mask, extend, line_widt
         
         
         %%%%%%% append %%%%%%%%%%%%%%%%%
-        start_x = cat(2, start_x, tmp_start_x);
-        start_y = cat(2, start_y, tmp_start_y);
-        L = cat(2, L, tmp_L);
+        start_x(end+1 : end+tmp_n) = tmp_start_x;
+        start_y(end+1 : end+tmp_n) = tmp_start_y;
+        L(end+1 : end+tmp_n) = tmp_L;
         n = n + tmp_n;
         %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         
@@ -372,13 +371,13 @@ function [start_x, start_y, L, n] = get_line_pos_and_len(mask, extend, line_widt
 end
 
 
-function img = LDR(img, n)
-    Interval = 255/n;
-    img = double(img);
-    img = uint8(img./Interval);
-    img(img == n) = n-1;
-    img = uint8((img+0.5)*Interval);
-end
+% function img = LDR(img, n)
+%     Interval = 255/n;
+%     img = double(img);
+%     img = uint8(img./Interval);
+%     img(img == n) = n-1;
+%     img = uint8((img+0.5)*Interval);
+% end
 
 
 
